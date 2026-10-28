@@ -581,7 +581,9 @@ Inductive sgexp : Set :=
 | sg_ann : sgexp -> sgtyp -> sgexp
 | sg_inl : sgexp -> sgtyp -> sgtyp -> sgexp
 | sg_inr : sgexp -> sgtyp -> sgtyp -> sgexp
-| sg_switch : sgexp -> typ -> sgexp -> typ -> sgexp -> sgtyp -> sgexp.
+| sg_switch : sgexp -> typ -> sgexp -> typ -> sgexp -> sgtyp -> sgexp
+(* Static evidence is immutable under gradual weakening. *)
+| sg_coerce : typ -> typ -> sgexp -> sgexp.
 
 Inductive sgprecision : sgtyp -> sgtyp -> Prop :=
 | sg_prec_any : forall A, sgprecision A sg_any
@@ -635,7 +637,9 @@ Inductive sgterm_precision : sgexp -> sgexp -> Prop :=
 | sg_ep_switch : forall e e' D l l' E r r' A A',
   sgterm_precision e e' -> sgterm_precision l l' -> sgterm_precision r r' ->
   sgprecision A A' -> sgterm_precision (sg_switch e D l E r A)
-                    (sg_switch e' D l' E r' A').
+                    (sg_switch e' D l' E r' A')
+          | sg_ep_coerce : forall A B e e', sgterm_precision e e' ->
+            sgterm_precision (sg_coerce A B e) (sg_coerce A B e').
 
 (* Runtime closures retain their lexical environment and original descriptor.
    Wrappers retain the underlying descriptor as well. *)

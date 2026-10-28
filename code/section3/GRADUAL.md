@@ -1,6 +1,410 @@
-# Section 3 structural gradual extension
+# Section 3 gradual extension
 
-This is a checked structural extension with static and successful dynamic gradual-guarantee proofs for every source constructor, unbounded operational adequacy, error/divergence approximation, and logical preservation for arrow-shaped lambda descriptors and arbitrary switch descriptors. It is not a full gradual metatheory: intrinsic descriptor validity, error-free progress, and full static conservativity remain open. All syntax is in `syntax.v`; all typing, evaluation, and proofs are in `typing.v`. The original static calculus and its proofs remain available. The former `gradual.v` definitions, proofs, and examples have been integrated into these two files.
+All syntax is in `syntax.v`; typing, evaluation, and proofs are in `typing.v`.
+The original static calculus remains available. No new axiom or admitted proof
+is introduced by the static evidence repair.
+
+## Static evidence and gradual projection
+
+`sg_coerce A B e` is a trusted compiler-only node. Public `sgtyping` has no
+rule for it. The separate `sg_compiler_typing` judgment requires `A <: B`
+and compiler typing of the operand at exactly `sg_lift A`, and concludes
+compiler typing at `sg_lift B`. Its other rules certify exact variables,
+data, source-descriptor lambdas, applications, and switches; there is no
+annotation/consistency rule or precision escape to unknown.
+
+`sg_removed_coerce_rule_unsound` proves that the removed public rule's
+premises accept `sg_ann sg_null sg_any` as evidence for `Int <: Int`, yet
+erasure returns unit, which fails integer runtime typing.
+`sg_public_rejects_coerce` excludes every direct public coercion typing;
+`sg_compiler_rejects_forged_evidence` rejects this concrete forgery in the
+compiler judgment. Compiler typing is a syntactic certificate. The erased-
+coercion preservation fragment is proved by
+`sg_compiler_coercion_preservation`: successful coercion evaluation returns the
+identical runtime value and descriptor. Preservation for compiler applications
+and switches remains outside this fragment.
+
+Term precision still fixes both endpoints and recursively relates bodies;
+every existing precision case remains available. Arbitrary operand weakening
+need not preserve compiler certificates, and no compiler SG is claimed.
+
+Evaluation erases this evidence: at successor fuel, evaluating the coercion
+evaluates its body at predecessor fuel and returns exactly the same value.
+The independent operational expansion similarly requests evaluation of the
+body and returns its result. No union arm is selected and no wrapper is added.
+
+`sg_exact_elaboration` now uses this evidence for arbitrary static subsumption
+and both static union introductions. This covers nested unions and general
+subtyping endpoints. The runtime equations `sg_static_coercion_erasure`,
+`sg_static_coercion_success`, and `sg_nested_union_evidence` establish erasure,
+preservation of successful evaluation, and erasure of nested union evidence.
+These equations hold independently of typing; compiler typing checks exact
+operand types and evidence endpoints separately.
+
+Gradual projection remains implemented by `sg_cast`. Its union case is left
+biased, and arrow casts may add delayed wrappers. Explicit gradual annotations
+and gradual union introductions still use those casts. Closure domain/range
+and switch binder/result boundaries also retain their existing casts. Runtime
+descriptors remain immutable, including through successful casts.
+
+## Gradual guarantees and operational results
+
+`sg_static_gradual_guarantee` retains the original structural statement for
+public `sgtyping`. Its coercion precision case has no public typing premise
+and is discharged by inversion. It is not a guarantee for compiler typing.
+`sg_evaluation_simulation`, `sg_dynamic_gradual_guarantee`, and
+`sg_application_dynamic_guarantee` retain their general successful-evaluation
+statements, now including coercions. `sg_complete_outcome_gradual_guarantee`
+combines success precision with `sg_error` and divergence approximation for
+all three outcomes. No blame labels are needed because error is an explicit
+semantic result. No existing precision case was removed.
+
+The dynamic guarantee relates successful evaluations under precision; it is
+not a universal termination or successful-source-execution theorem.
+The fuel monotonicity and expansion/evaluation proofs extend to the erased
+constructor. Unbounded operational adequacy, determinism, and the existing
+error/divergence approximation results remain checked.
+
+## Logical safety scope
+
+`sg_safe_syntax` excludes coercions explicitly. The existing exact-boundary
+logical relation uses exact arrow annotations and is not closed under erased
+static subtyping. Consequently the checked-syntax finite-success preservation
+and logical safety results do not cover every repaired exact elaboration.
+Their precision closure remains proved. Public SG excludes compiler nodes
+through its typing premise; successful DGG includes them without requiring
+typing or claiming preservation of compiler certificates.
+
+`sg_elaboration_syntax` separately describes elaboration targets and permits
+coercions recursively. It enforces the existing descriptor shape restrictions
+without claiming the checked-boundary logical safety invariant.
+`sg_subtype_closed_descriptor_contract_total` proves that a valid value whose
+tag is below `A` can be cast to every `B` with `A <: B`, including arrow and
+union cases, while retaining logical typing and its descriptor. The contract
+is for the successfully installed boundary; it is not an intrinsic claim
+about an arbitrary unwrapped closure descriptor.
+
+For publicly typed terms, `sg_public_descriptor_safety` proves that this
+descriptor-shape predicate implies `sg_safe_syntax`: there are no typed
+coercions to exclude. `sg_public_logical_safety` therefore states logical
+safety using public typing, descriptor shape, and valid environments. It allows
+explicit runtime errors and divergence. Safety for arbitrary lambda descriptors
+and safety for compiler targets remain unproved; this is not full-calculus
+typing safety.
+
+## Exact elaboration and source values
+
+`sg_exact_elaboration_source` retains source typing soundness.
+`sg_exact_elaboration_target` proves `sg_compiler_typing` at the lifted static type
+and `sg_elaboration_syntax`. `sg_exact_elaboration_complete` covers every
+original typing rule under a covering context, including arbitrary static
+subsumption; its canonical and closed corollaries remain available.
+
+`sg_exact_elaboration_value_evaluation` has no `sg_safe_syntax` premise:
+given an exact elaboration, a valid target environment, and a source value,
+there exist fuel and a successful target value related by
+`sg_source_value_observation`. Static injections and subsumption recurse and
+return the same runtime value. Function observation records the descriptor;
+it does not establish a relation between function bodies or environments.
+The existing cast observation and immediate-totality lemmas remain independent
+results about casts.
+
+The relation retains cofinite and fresh-pick binder constructors. This is the
+unrestricted exact-elaboration correspondence currently proved for source
+values. General beta/switch execution correspondence for arbitrary exact
+elaborations is deliberately narrowed to the separately verified `sg_ho_*`
+compiler conditions, because the remaining gradual boundary casts are left
+biased. Equivalence between binder presentations and independence of the
+chosen fresh name remain separate proof obligations.
+
+## Static union regression
+
+The regression combines `Unit -> Unit` and `Int -> Int` in a union, injects an
+integer identity function into the right arm, and switches on its descriptor.
+The right branch applies the identity to `7`. A left-biased runtime projection
+can install the wrong function wrapper even though the immutable descriptor
+later selects the right switch branch.
+
+The repaired exact elaboration carries erased evidence for the right injection
+and subsequent subsumption. `sg_union_trap_exact_elaboration` witnesses that
+elaboration. Original typing and reduction to integer `7` remain proved.
+`sg_union_trap_elaborated_success` proves target evaluation at fuel 8 returns
+`sg_done (sg_vint 7)`; `sg_union_trap_elaborated_operational_success` proves the
+corresponding unbounded operational run.
+
+The retained raw boundary obstruction lemmas describe gradual projection and
+the independent checked compiler. They do not refute the repaired exact
+elaboration. The obsolete whole-elaboration error and universal-preservation
+refutation results were removed.
+
+## Independent compilers and remaining obligations
+
+The data compiler and checked higher-order compiler remain separate
+translations. Their conditional correspondences retain explicit successful
+source-run premises. Original finite execution decomposition is also retained;
+it does not supply unconditional correspondence for repaired exact elaboration.
+
+Full static conservativity remains open. Function and switch boundary casts
+can still project static unions and need further analysis or repair. A logical
+relation closed under static subtyping, execution correspondence for general
+applications and switches, and stronger function observations remain necessary
+for a full proof. Intrinsic descriptor validity is also unproved. Neither a
+universal success-preservation theorem nor its negation is claimed for the
+repaired relation.
+
+## Validation
+
+Validation uses direct `make` and `coqchk -silent -R . Top Top.typing`
+with Coq 8.13.2 in `disjoint-switches-functions:latest`, initialized
+with `eval "$(opam env)"`, with a read-only source mount and a temporary build
+copy. Direct build exit status was checked because the artifact wrapper can
+mask failures.
+
+`Print Assumptions` audited public SG/logical safety, successful DGG,
+elaboration target/completeness, the removed-rule counterexample, compiler
+rejection of forged evidence, and finite/unbounded regression success.
+Public SG and compiler rejection are closed under the global context.
+The other audited results inherit only the existing TLC assumptions
+`LibAxioms.prop_ext`, `LibAxioms.indefinite_description`, and
+`LibAxioms.fun_ext_dep`. Original source preservation/substitution and results
+depending on them can additionally inherit `JMeq.JMeq_eq`.
+
+<!-- Historical material below is superseded by the repaired scope above.
+In particular, older claims refuting the current exact elaboration do not apply.
+
+# Section 3 gradual development: repaired static evidence
+
+All syntax is in `syntax.v`; judgments, evaluators, and proofs are in
+`typing.v`. There is no additional gradual module. This is a partial gradual
+metatheory: structural SG and successful DGG are proved; full static execution
+conservativity remains a target.
+
+## Static evidence and gradual projection
+
+The original obstruction came from conflating static subsumption with gradual
+projection. A target-only cast of an `Int -> Int` closure to
+`(Unit -> Unit) | (Int -> Int)` chooses the left callable arm and installs a
+`Unit -> Unit` wrapper. Although the runtime descriptor remains `Int -> Int`,
+calling that wrapper on integer `7` fails. Tag preservation and immediate cast
+success do not imply success of future calls.
+
+`sg_coerce A B e` now records static subtype endpoints. Its typing rule requires
+`A <: B`, `sgprecision (sg_lift A) X`, and `sgtyping G e X`, and concludes
+`sgtyping G (sg_coerce A B e) (sg_lift B)`. The precision premise supports
+recursive weakening of the body in structural SG. This is trusted static
+evidence, not a dynamically checked boundary or a runtime proof object.
+
+Evaluation consumes one fuel layer and evaluates the body. It preserves the
+complete returned value, including closure bodies, captured environments, and
+existing wrappers. It does not select a union arm or create a wrapper.
+Independent operational expansion makes the corresponding evaluation request.
+
+Exact elaboration uses this node at all three static evidence sites:
+
+- `sgee_sub`: arbitrary `A <: B` becomes `sg_coerce A B target`.
+- `sgee_inl`: union introduction becomes `sg_coerce A (t_union A B) target`.
+- `sgee_inr`: union introduction becomes `sg_coerce B (t_union A B) target`.
+
+These rules cover general and nested union subsumption, not only reflexive
+subsumption or one chosen regression. An injection whose selected arm is itself
+a union also preserves the underlying value.
+
+Explicit gradual `sg_ann`, `sg_inl`, and `sg_inr` retain their checked runtime
+semantics. `sg_cast` remains left biased for unions and installs delayed arrow
+wrappers. Function argument/result checks and switch binder/result checks also
+remain. This distinction repairs the static evidence sites without asserting
+that every remaining boundary already implements static subtyping correctly.
+
+`sg_static_coercion_erasure` proves, for all endpoints, bodies, environments,
+and fuel, that evaluation at successor fuel equals evaluation of the body at
+the predecessor fuel. `sg_static_coercion_success` gives the success corollary.
+`sg_nested_union_evidence` proves that a right union introduction followed by
+arbitrary further static evidence equals evaluation of the original body after
+two fuel layers. These operational equations need no subtype premise; typing
+separately validates the evidence endpoints. Preserving the identical value
+also preserves all subsequent applications of that value.
+
+## Gradual guarantees and operational results
+
+Structural precision permits unknown types inside arrows and unions. Open
+environments weaken pointwise. Existing expression precision constructors are
+retained. The new `sg_ep_coerce` fixes both static endpoints and recursively
+relates the two bodies; the endpoint policy follows the fixed static descriptor
+metadata policy. It imposes no restriction on existing precision cases.
+
+- `sg_static_gradual_guarantee`: a precision weakening of a typed expression
+  in a precision weakening of its environment has a type less precise than the
+  original type. The coercion case composes the body's precision witnesses.
+- `sg_cast_precision`: successful casts survive simultaneous structural
+  target-type and runtime-value weakening, including closures, wrappers, and
+  left-biased unions.
+- `sg_evaluation_simulation`: expression and application successes simulate
+  under precision for every target fuel budget at least as large as the precise
+  budget. The coercion case uses the recursive expression simulation.
+- `sg_dynamic_gradual_guarantee` and `sg_application_dynamic_guarantee`:
+  successful precise executions have related successful weaker executions;
+  the same fuel budget can be chosen. These remain general successful DGGs,
+  not only guarantees for exact elaborations or checked-safe syntax.
+
+Fuel monotonicity for successes and errors, independent unbounded semantics
+(`sg_runs` / `sg_plan_runs`), operational adequacy, determinism, divergence
+adequacy, termination classification, and error/divergence approximation remain
+proved. Coercions are covered by evaluator monotonicity and operational
+expansion/adequacy. The DGG makes no claim that all typed programs succeed.
+
+## Logical safety: explicit scope change
+
+Runtime logical validity tracks typed closure bodies and captured environments;
+wrappers contain valid callable values. `sg_runtime_type` uses exact arrow
+annotations, so it cannot directly validate a value whose static supertype
+has different arrow endpoints after erased coercion.
+
+Consequently `sg_safe_syntax` explicitly excludes `sg_coerce`. This is a
+restriction of the logical-preservation fragment, and is not a weakening of
+term precision or of the general SG/DGG statements. Arrow-shaped lambda
+descriptors remain required. Arbitrary switch descriptors are supported through
+checked branch-entry casts.
+
+`sg_finite_success_preservation`, `sg_application_logical_preservation`, their
+unbounded counterparts, and `sg_logical_safety` retain this checked-boundary
+scope. `sg_safe_syntax_precision` and `sg_safe_static_gradual_guarantee` preserve
+that fragment. Logical safety allows explicit errors and uncovered switches;
+function descriptors alone do not establish intrinsic domain/result contracts.
+
+`sg_elaboration_syntax` is a separate recursive descriptor-shape predicate that
+permits static coercions. It does not imply checked-boundary logical safety.
+Extending preservation to repaired elaborations needs a subtype-closed logical
+relation or another semantic argument.
+
+## Exact elaboration and source values
+
+`sg_exact_elaboration G Delta e target A` relates original locally nameless
+terms to structural de Bruijn terms. `Delta` supplies indexed positions for free
+names. The relation includes literals, null, variables, lambdas, applications,
+switches, union introductions, and general subsumption, with both cofinite and
+fresh-name binder rules.
+
+- `sg_exact_elaboration_source` proves original `typing G e A`.
+- `sg_exact_elaboration_target` proves target typing at `sg_lift A` and
+  `sg_elaboration_syntax target`. It no longer claims `sg_safe_syntax target`.
+- `sg_context_covers G Delta` requires a slot with the same name and type for
+  every original binding. It assumes neither elaboration nor target typing.
+- `sg_exact_elaboration_complete` gives an elaboration for every original
+  typing derivation and covering indexed context, including every subsumption
+  rule. Canonical coverage uses `Delta = G`; the closed corollary gives target
+  typing and `sg_elaboration_syntax` under empty contexts.
+
+Fresh-name source soundness uses `sg_typing_fresh_open`, original weakening,
+and substitution. Equivalence of fresh-name and cofinite-only elaboration, and
+independence of the target from fresh-name choices, remain open.
+
+`sg_source_value_observation` preserves exact integer payloads, null/unit
+identity, and a lambda's declared arrow descriptor. Its function case does not
+relate bodies or captured environments. Successful casts preserve this
+observation. `sg_source_value_cast_total` proves immediate cast success for
+already valid observed values at static supertypes; it does not establish future
+call success.
+
+`sg_exact_elaboration_value_evaluation` retains its unrestricted statement:
+every elaboration of an original value, in every logically valid environment
+for its indexed context, has a finite successful evaluation producing an
+observed value. It requires no `sg_safe_syntax` premise. Repeated subsumption,
+both union introductions, and both lambda binder rules are included. This is
+value evaluation, not general beta/switch execution correspondence.
+
+## Regression
+
+The closed source program switches the integer identity between the disjoint
+`Unit -> Unit` and `Int -> Int` descriptors, returns `0` on the left, and
+applies the right binder to `7` on the right.
+
+`sg_union_trap_exact_elaboration` checks an elaboration whose right union
+introduction and following reflexive union subsumption now both carry erased
+evidence. Original typing, closedness, and target typing are proved.
+`sg_union_trap_source_termination` proves original reduction to integer `7`.
+`sg_union_trap_elaborated_success` proves target evaluation at fuel `8` returns
+`sg_vint 7`; `sg_union_trap_elaborated_operational_success` proves the same
+unbounded answer.
+
+The obsolete whole-elaboration error, no-success, and universal-refutation
+theorems have been removed. `sg_union_trap_source_boundary`,
+`sg_union_trap_target_boundary`, and
+`sg_union_trap_boundary_operational_error` still prove the raw left-biased
+projection obstruction. Their statements concern gradual projection and the
+independent checked compiler, not the repaired evidence sites.
+
+## Independent compilers and original execution
+
+`sg_source_data_runs` supplies independent first-order source semantics;
+`sg_data_compile_evaluation` and `sg_data_compile_operational` preserve its
+successful answers exactly. `sg_data_instantiate_open` bridges indexed source
+environments to original opening. `sg_source_data_runs_original` and
+`sg_data_compile_original_correspondence` pair target success with actual
+original reduction under data-environment and original-typing premises.
+
+The higher-order extension has lexical source closures, captured environments,
+computed function positions, function arguments/results, switches, and delayed
+source boundaries. `sg_ho_check` retains left-biased source checks.
+`sg_ho_check_encoding` proves check agreement; `sg_ho_compile_simulation` and
+its operational corollary preserve successful `sg_ho_runs` / `sg_ho_applies`
+derivations under `sg_ho_encode`. Quotation erases source boundaries.
+`sg_ho_original_simulation` and `sg_ho_compile_original_correspondence` require
+well-formed environments/arguments and original typing of quotations, and prove
+original reduction together with target execution.
+
+These compiler results are conditional on successful checked source runs.
+Existence of such runs for every original successful execution is unproved.
+They concern a separate compiler, not arbitrary exact elaborations.
+`sg_original_execution_decomposition` and `sg_original_evaluation_reduction`
+connect finite original reductions and independent original big-step evaluation;
+they do not supply the missing checked runs. `sg_ho_shape` excludes data
+boundaries but does not prove function domain/result contracts.
+
+`sg_descriptor_entry_contract`, `sg_checked_descriptor_application`, and
+`sg_descriptor_arrow_call_checks` certify installed checked boundaries.
+`sg_static_tag_cast_total` and `sg_static_subsumption_cast_total` establish
+immediate cast totality with explicit tag/subtype premises. None supplies
+intrinsic closure descriptor contracts or general future-call nonfailure.
+
+The retained closed `gtyp` / `gexp` layer includes `g_embed`, `g_inject`,
+`g_project`, `g_pack`, and `g_error`. Its original preservation, progress,
+safety, determinism, embedding, tag-preservation, and roundtrip results remain.
+Those results concern `gtyping`, not structural `sgtyping`.
+
+## Remaining obligations
+
+Full static conservativity requires execution correspondence for every relevant
+static elaboration, with related function bodies and environments. Function
+argument/result and switch binder/result boundaries still invoke target-only
+casts; nested unions at these boundaries require analysis and possibly further
+repair. The current success regression and erased-evidence equations do not
+settle those sites. A subtype-closed logical relation must also replace or
+extend exact-boundary preservation for coercions. Fresh-name independence,
+fresh-pick/cofinite equivalence, and existence of general checked compiler runs
+remain separate obligations. No universal success-preservation theorem is
+claimed for the repaired relation, nor is its negation claimed.
+
+## Validation
+
+The repair passed two direct `make` runs with zero failed proof-repair builds
+in this round. The second run included both static union introduction changes
+and unrestricted source-value evaluation. `coqchk -silent -R . Top Top.typing`
+passed. Validation used Coq 8.13.2 in
+`disjoint-switches-functions:latest`, `eval "$(opam env)"`, a read-only source
+mount, and a temporary copy containing the `.v` files and Makefile. No build
+products were written into the source directory. Direct `make` exit status is
+used because the artifact's wrapper script can mask failures.
+
+`Print Assumptions` audited SG, successful DGG, elaboration completeness,
+unrestricted source-value evaluation, evidence erasure, nested union evidence,
+and finite/unbounded repaired regression success. SG is closed under the global
+context. The other audited results inherit only the existing TLC assumptions
+`LibAxioms.prop_ext`, `LibAxioms.indefinite_description`, and
+`LibAxioms.fun_ext_dep`. The original source metatheory and results depending
+on its preservation/substitution can additionally inherit `JMeq.JMeq_eq`.
+No axiom, parameter, or admitted proof was introduced by this repair.# Section 3 structural gradual extension
+
+This is a checked structural extension with static and successful dynamic gradual-guarantee proofs for every source constructor, unbounded operational adequacy, error/divergence approximation, and logical preservation for arrow-shaped lambda descriptors and arbitrary switch descriptors. It is not a full gradual metatheory: intrinsic descriptor validity remains unproved, and the closed counterexample below refutes preservation of original successful execution by arbitrary exact elaborations. Full static conservativity in that form is false under the current definitions. All syntax is in `syntax.v`; all typing, evaluation, and proofs are in `typing.v`. The original static calculus and its proofs remain available. The former `gradual.v` definitions, proofs, and examples have been integrated into these two files.
 
 ## Structural language
 
@@ -11,6 +415,27 @@ This is a checked structural extension with static and successful dynamic gradua
 Each lambda carries a separate static descriptor `D`, in addition to gradual domain/result annotations. Switch descriptors are also static. `sgterm_precision` holds these descriptors fixed while allowing structural precision changes to gradual annotations and branch bodies. This choice preserves observable switch tests: erasing an observable function descriptor could change which branch executes. `sg_cast_preserves_descriptor` proves every successful cast retains the descriptor, including through wrappers. The current typing rule does not enforce agreement between a closure's descriptor and its gradual annotations; descriptors must not be interpreted as a proved runtime typing invariant.
 
 ## Evaluation and casts
+
+`sg_union_trap_disjoint` proves that `Unit → Unit` and `Int → Int` are
+semantically disjoint. `sg_union_trap_source_boundary` proves both the
+right arm's subtype membership in their union and the source check's selection
+of a `Unit → Unit` boundary around the integer identity closure; checking
+integer `7` against that boundary's domain fails. The target counterpart
+`sg_union_trap_target_boundary` proves that the lifted union cast installs the
+same wrapper and `sg_apply 5` returns `sg_error` on integer `7`.
+`sg_union_trap_boundary_operational_error` establishes the corresponding
+independent operational application error through adequacy.
+
+The closed typed program below turns these boundary facts into a checked
+counterexample to success preservation for arbitrary exact elaborations.
+Subtype membership, disjointness, quotation preservation, and immediate cast
+totality do not establish compatibility of later calls. Reconstructing checked
+source runs from all terminating original executions remains open; universal
+success preservation for the current exact-elaboration relation is false.
+The source boundary theorem is closed under the global context;
+disjointness uses TLC propositional extensionality, and the target boundary
+and operational error results inherit TLC propositional extensionality,
+indefinite description, and dependent functional extensionality.
 
 `sg_eval` and `sg_apply` are mutually recursive fuel interpreters. Results distinguish successful values, `sg_error`, and `sg_timeout`. Timeout is fuel exhaustion, not a proof of divergence. Missing environment entries and non-callable applications return errors. Errors and timeouts propagate through sequencing.
 
@@ -266,8 +691,9 @@ semantics are unchanged.
 These establish full typing completeness for the relation containing both
 cofinite and fresh-name binder rules. Equivalence to its cofinite-only subset,
 or independence of a fixed target from the chosen fresh name, is not proved.
-Source/target evaluation correspondence remains open, so this is not full
-structural conservativity.
+These typing results do not establish operational conservativity. Universal
+success correspondence for this relation is refuted by the closed
+counterexample below, which uses only cofinite binder rules.
 
 Additional static-interface results are checked:
 
@@ -425,8 +851,9 @@ typing and source boundary subtyping premises.
 These theorems are conditional on a successful checked source derivation.
 They do not establish existence of such derivations for all original typed
 executions, their converse, typing of this separate compiler, or operational
-correspondence for arbitrary `sg_exact_elaboration` derivations. In particular,
-full static conservativity remains open.
+correspondence for arbitrary `sg_exact_elaboration` derivations. Universal
+success correspondence for the latter is refuted below; the converse for this
+separate compiler remains open.
 
 `sg_checked_descriptor v D` means both logical typing at `sg_lift D` and
 `sg_tag v <: D`. The descriptor theorems establish the installed boundary:
@@ -447,7 +874,143 @@ theorems certify explicit runtime boundaries. Adequacy is proved against
 independent big-step semantics; no separate small-step semantics or coinductive
 infinite reduction relation is provided.
 
+## Original finite-execution decomposition
+
+`sg_original_evaluates` is an independent big-step judgment over original
+expressions. Its rules evaluate values, applications, and both switch branches
+using original opening, descriptor lookup, and subtyping. They mention neither
+target evaluation nor checked source runs. The checked theorems are:
+
+```coq
+sg_original_execution_decomposition : forall e v,
+	sg_original_steps e v -> value v -> sg_original_evaluates e v.
+
+sg_original_evaluation_reduction : forall e v,
+	sg_original_evaluates e v -> forall G T, typing G e T ->
+	sg_original_steps e v.
+```
+
+The first theorem covers every terminating original execution, including
+untyped ones. It assumes no desired big-step run. A finite prefix ending in
+a nonvalue does not satisfy its value premise; infinite executions are not
+covered. Neither theorem asserts universal termination. The right-switch rule
+retains the original descriptor premise, without imposing the left-failure
+premise of checked source semantics.
+
+`sg_ho_shape` independently requires structurally shaped captured values and
+callable contents of boundaries. `sg_ho_shape_descriptor` classifies them as
+integers, unit, or callable values with arrow tags. `sg_ho_check_shape` proves
+that successful source checks preserve this predicate. These statements do
+not use evaluation premises. Shape alone does not constrain boundary domains
+or ranges relative to the wrapped closure.
+
+The reverse bridge to `sg_ho_runs` remains open. It needs indexed scope/lookup
+coverage (missing quotation slots currently default to null), a relation
+between substitution and closure environments, boundary domain/result
+contracts preserved through calls, and typed disjointness to justify a right
+branch's left-test failure. Universal success correspondence for arbitrary
+exact elaborations is refuted below. The value observation tracks function tags only,
+whereas application correspondence needs a relation between bodies, captured
+environments, and inserted wrappers. Exact syntactic equality of function
+values would not account for those wrappers.
+
+The attempted check-totality proof was removed after the third unsuccessful
+proof build, following the requested repair limit. No unfinished theorem or
+admitted proof is retained. The retained modules passed isolated Docker
+`make` and `coqchk -silent -R . Top Top.typing` with a read-only source mount
+and a temporary build copy. `Print Assumptions` reports the three existing TLC
+assumptions for execution decomposition, those assumptions plus
+`JMeq.JMeq_eq` for evaluation reduction, and no assumptions for the two shape
+lemmas. No new axiom was introduced.
+
 ## Retained closed boundary layer
+
+### Checked closed exact-elaboration counterexample
+
+`sg_union_trap_program` switches the closed integer identity against
+`Unit → Unit` and `Int → Int`, with branch bodies `0` and `f 7`.
+`sg_union_trap_exact_elaboration` proves:
+
+```coq
+sg_exact_elaboration empty nil sg_union_trap_program
+	sg_union_trap_elaborated t_int.
+```
+
+The derivation uses the cofinite binder rules. Its scrutinee target is a
+right union injection followed by `sgee_sub` using reflexivity at the full
+union. Thus the problematic union check is an allowed exact elaboration
+choice. Applying source soundness yields original typing under `empty`;
+applying target soundness yields structural typing under `nil` and safe
+syntax. The source expression has no free-variable occurrences.
+
+`sg_union_trap_closed` proves the free-variable set is empty;
+`sg_union_trap_source_typing` and `sg_union_trap_target_typing` instantiate
+source typing and target typing with safe syntax.
+`sg_union_trap_source_termination` proves that the original execution selects
+right and beta-reduces to `7`, using `sg_original_steps` over actual original
+`step` reductions.
+The target union check installs the left Unit-domain wrapper while retaining
+the integer-arrow tag; right-branch entry wraps it again, and applying the
+binder to `7` reaches the failing inner Unit-domain check. The checked results
+are:
+
+- `sg_union_trap_switch_tests`: the preserved integer-arrow descriptor fails
+	the left test and passes its own right test. The proof uses semantic static
+	disjointness and reflexive subtyping, then unfolds `sg_test` and reasons by
+	classical cases; it does not assume the opaque classical decision computes.
+- `sg_union_trap_elaborated_error`:
+	`sg_eval 8 nil sg_union_trap_elaborated = sg_error`.
+- `sg_union_trap_elaborated_operational_error`:
+	`sg_runs (sg_evaluate nil sg_union_trap_elaborated) sg_error`, by adequacy.
+- `sg_union_trap_elaborated_no_success`: no value `v` has a successful
+	operational run of this target, by operational determinism.
+- `sg_exact_elaboration_success_preservation_refuted`: the universal claim
+	that every closed exact elaboration of an original successful execution
+	has some successful target answer is false. No particular observation
+	relation for the target answer is required, so stronger preservation
+	claims implying target success are also excluded.
+
+Together with closedness, both typing results, and original termination at
+`7`, these results formally refute arbitrary exact-elaboration success
+preservation under the current definitions. The full requested metatheory
+cannot be proved unchanged. The separate `sg_ho_runs` compiler converse is
+not settled by this exact-elaboration counterexample.
+
+The completed additions passed isolated read-only/temp-copy `make` and
+`coqchk -silent -R . Top Top.typing`. An assumption audit of
+the whole-target fuel error, unbounded error, and no-success theorems reports
+exactly the existing TLC assumptions `prop_ext`, `indefinite_description`,
+and `fun_ext_dep`. The universal refutation additionally inherits
+`JMeq.JMeq_eq` through original elaboration source soundness. Source and target
+soundness are instantiated at the concrete elaboration. No new axiom or
+admitted proof was introduced.
+The structural dynamic gradual guarantee compares precision-related target
+programs and is unchanged by this obstruction to static correspondence.
+
+### Union-cast repair options
+
+Avoiding the reflexive union annotation in this elaboration would remove the
+specific wrapper that causes this execution to fail. A compiler that omits
+such checks would need its own elaboration relation, typing/completeness
+proofs, and operational correspondence. Selecting a better target does not
+establish a theorem quantified over every derivation of the existing relation.
+
+A broader repair could use source subtype evidence or retain union-injection
+provenance when choosing a cast arm. Descriptor-directed selection is another
+candidate, but requires a policy for unknown descriptors and for descriptors
+that do not characterize delayed wrapper contracts. None of these proposals
+is implemented or proved here. These are design options with explicit proof
+obligations, not established sound replacements.
+
+Changing runtime union selection requires revisiting `sg_cast_precision` and
+`sg_cast_forget`, their evaluation/application simulations and structural DGG,
+logical preservation, and operational adequacy. Changing the source boundary
+policy also affects `sg_ho_check_encoding` and compiler simulation. In
+particular, a selection policy must behave coherently when descriptors and
+types lose precision; tag selection alone is not a proof of that property.
+The existing precision relation and DGG are retained. A repaired semantics
+would need to reprove them, rather than exclude this case by weakening the
+precision theorem's scope.
 
 The `gtyp`/`gexp` API remains available: `g_embed`, `g_inject`, `g_project`, `g_pack`, and `g_error`. Injection retains the original `findtype` tag even under static subsumption to Top; projection checks tag subtyping and returns the unchanged value or an error. This closed boundary layer has no structural function wrappers.
 
@@ -509,7 +1072,8 @@ The original-step bridge and paired correspondence also passed isolated
 `sg_data_instantiate_open` reports the three TLC assumptions above.
 `sg_source_data_runs_original` and `sg_data_compile_original_correspondence`
 additionally inherit `JMeq.JMeq_eq` through original preservation. They introduce
-no new axiom or admitted proof. Full static conservativity remains open.
+no new axiom or admitted proof. These compiler results do not establish
+universal exact-elaboration success preservation, which is refuted above.
 
 The higher-order compiler simulation, original-step simulation, and paired
 correspondence passed the same isolated read-only/temp-copy `make` and
@@ -517,3 +1081,14 @@ correspondence passed the same isolated read-only/temp-copy `make` and
 the three TLC assumptions above. The original-step simulation and paired
 correspondence additionally inherit `JMeq.JMeq_eq` through original
 preservation. No axiom or admitted proof was added.
+
+On 2026-10-28, the completed closed counterexample passed isolated `make` and
+`coqchk -silent -R . Top Top.typing` with a read-only source mount and a
+temporary build copy. `Print Assumptions` on
+`sg_union_trap_elaborated_error`,
+`sg_union_trap_elaborated_operational_error`, and
+`sg_union_trap_elaborated_no_success` reports the three TLC assumptions above.
+`sg_exact_elaboration_success_preservation_refuted` additionally inherits
+`JMeq.JMeq_eq`. No semantics, precision relation, or DGG theorem was changed.
+
+-->

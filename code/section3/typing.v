@@ -252,6 +252,35 @@ Inductive sgtyping : list sgtyp -> sgexp -> sgtyp -> Prop :=
     sgtyping (sg_lift E :: G) r C -> sgconsistent C A ->
     sgtyping G (sg_switch e D l E r A) A.
 
+  (* Compiler-only typing: erased evidence requires the exact input type.
+     This judgment has no consistency or precision-based evidence rule and
+     makes no static gradual guarantee under arbitrary operand weakening. *)
+  Inductive sg_compiler_typing : list sgtyp -> sgexp -> sgtyp -> Prop :=
+  | sgct_var : forall G x A, nth_error G x = Some A ->
+    sg_compiler_typing G (sg_var x) A
+  | sgct_lit : forall G n, sg_compiler_typing G (sg_lit n) sg_int
+  | sgct_null : forall G, sg_compiler_typing G sg_null sg_unit
+  | sgct_lam : forall G A B e,
+    sg_compiler_typing (sg_lift A :: G) e (sg_lift B) ->
+    sg_compiler_typing G
+    (sg_lam (t_arrow A B) (sg_lift A) (sg_lift B) e)
+      (sg_arrow (sg_lift A) (sg_lift B))
+  | sgct_app : forall G f a A B,
+    sg_compiler_typing G f (sg_arrow A B) ->
+    sg_compiler_typing G a A -> sg_compiler_typing G (sg_app f a) B
+  | sgct_switch : forall G e D l E r A,
+    sg_compiler_typing G e (sg_lift (t_union D E)) -> D *a E ->
+    sg_compiler_typing (sg_lift D :: G) l A ->
+    sg_compiler_typing (sg_lift E :: G) r A ->
+    sg_compiler_typing G (sg_switch e D l E r A) A
+  | sgct_coerce : forall G A B e, A <: B ->
+    sg_compiler_typing G e (sg_lift A) ->
+    sg_compiler_typing G (sg_coerce A B e) (sg_lift B).
+
+  Theorem sg_public_rejects_coerce : forall G A B e T,
+    ~ sgtyping G (sg_coerce A B e) T.
+  Proof. intros G A B e T Typed; inversion Typed. Qed.
+
 Fixpoint sg_callable (v : sgval) : bool :=
   match v with
   | sg_closure _ _ _ _ _ => true
@@ -294,6 +323,7 @@ Fixpoint sg_eval (fuel : nat) (rho : list sgval) (e : sgexp) {struct fuel} : sgr
     | sg_app f a => sg_bind (sg_eval k rho f) (fun v =>
                      sg_bind (sg_eval k rho a) (sg_apply k v))
     | sg_ann e A => sg_bind (sg_eval k rho e) (sg_cast A)
+    | sg_coerce _ _ e => sg_eval k rho e
     | sg_inl e A B => sg_bind (sg_eval k rho e) (sg_cast A)
     | sg_inr e A B => sg_bind (sg_eval k rho e) (sg_cast B)
     | sg_switch e D l E r A => sg_bind (sg_eval k rho e) (fun v =>
@@ -655,7 +685,8 @@ Proof.
         | subSrc subDst leftSrc leftDst rightSrc rightDst PSub PLeft PRight
         | subSrc subDst leftSrc leftDst rightSrc rightDst PSub PLeft PRight
         | scrSrc scrDst descLeft leftSrc leftDst descRight rightSrc rightDst
-            targetSrc targetDst PScr PLeft PRight PTarget];
+            targetSrc targetDst PScr PLeft PRight PTarget
+          | staticSrc staticDst subSrc subDst PSub];
         cbn [sg_eval].
       * intros answer Run.
         destruct (nth_error envSrc index) as [found |] eqn:Lookup;
@@ -714,6 +745,7 @@ Proof.
                  +++ intros branchValSrc branchValDst RelatedBranch.
                  exact (sg_cast_success_precision _ _ _ _ PTarget RelatedBranch).
               ** intros answer Run; discriminate Run.
+            * exact (IHexpr _ _ PSub _ _ Envs _ Smaller).
     + intros funSrc funDst Funs argSrc argDst Args budget Bound.
       destruct budget as [| more]; [inversion Bound |].
       assert (Smaller : smaller <= more) by (apply le_S_n; exact Bound).
@@ -821,6 +853,7 @@ Proof.
           try apply Refl;
           (apply sg_bind_stable; [apply Refl | intros checked];
            apply sg_bind_stable; [apply Eval | intros; apply Refl]).
+          * apply Eval.
     + intros f a; destruct f; cbn [sg_apply]; try apply Refl.
       * apply sg_bind_stable; [apply Refl | intros v].
         apply sg_bind_stable; [apply Eval | intros; apply Refl].
@@ -852,6 +885,8 @@ Definition sg_expand (c : sg_command) : sg_plan :=
         sg_request (sg_evaluate rho a) (fun w =>
           sg_request (sg_invoke v w) (fun z => sg_answer (sg_done z))))
     | sg_ann e A => sg_request (sg_evaluate rho e) (fun v => sg_answer (sg_cast A v))
+    | sg_coerce _ _ e => sg_request (sg_evaluate rho e)
+      (fun v => sg_answer (sg_done v))
     | sg_inl e A B => sg_request (sg_evaluate rho e) (fun v => sg_answer (sg_cast A v))
     | sg_inr e A B => sg_request (sg_evaluate rho e) (fun v => sg_answer (sg_cast B v))
     | sg_switch e D l E r A => sg_request (sg_evaluate rho e) (fun v =>
@@ -916,6 +951,7 @@ Proof.
     + destruct (sg_cast (sg_lift t) v); reflexivity.
     + destruct (sg_test (sg_tag v) t0); [| reflexivity].
       destruct (sg_cast (sg_lift t0) v); reflexivity.
+  - apply sg_bind_return.
   - destruct (sg_cast A a); reflexivity.
   - destruct (sg_cast A a); reflexivity.
 Qed.
@@ -1125,9 +1161,12 @@ Qed.
   are arbitrary: branch-entry casts establish their declared binder types. *)
 Definition sg_data_descriptor (D : typ) : Prop := D = t_int \/ D = t_unit.
 
+(* Public typing already excludes erased evidence. The remaining restriction
+  here is the established arrow shape of observable lambda descriptors. *)
 Fixpoint sg_safe_syntax (e : sgexp) : Prop :=
   match e with
   | sg_var _ | sg_lit _ | sg_null => True
+  | sg_coerce _ _ _ => False
   | sg_lam D _ _ body => (exists X Y, D = t_arrow X Y) /\ sg_safe_syntax body
   | sg_app f a => sg_safe_syntax f /\ sg_safe_syntax a
   | sg_ann body _ | sg_inl body _ _ | sg_inr body _ _ => sg_safe_syntax body
@@ -1243,7 +1282,7 @@ Proof.
         | G e A B Body Cons | G e A B C Body Cons
         | G e A B C Body Cons
         | G e D l E r A T B C Scr Disj Left LC Right RC];
-        cbn [sg_eval] in Run; cbn [sg_safe_syntax] in Safe.
+        cbn [sg_eval] in Run; cbn [sg_safe_syntax] in Safe; try contradiction.
       * destruct (sg_environment_lookup _ _ Env _ _ Lookup)
           as [v [At VT]]. rewrite At in Run; inversion Run; subst; exact VT.
       * inversion Run; subst; split; [constructor | simpl; eauto].
@@ -1399,8 +1438,8 @@ Definition sg_id := sg_lam (t_arrow t_int t_int) sg_int sg_int (sg_var 0).
   Alongside the cofinite rules, fresh-name rules select one opening; their
   source soundness uses sg_typing_fresh_open below. Completeness uses these
   rules, not a claimed equivalence with the cofinite-only relation.
-  General static subsumption installs a checked target annotation. Union
-  injections are also retained as explicit elaboration choices. *)
+  General static subsumption and union introductions carry erased static
+  subtype evidence. They never invoke gradual target-only projection. *)
 Inductive sg_exact_elaboration : env -> list (var * typ) ->
     exp -> sgexp -> typ -> Prop :=
 | sgee_lit : forall G Delta n, okt G ->
@@ -1422,11 +1461,11 @@ Inductive sg_exact_elaboration : env -> list (var * typ) ->
   sg_exact_elaboration G Delta (e_app f a) (sg_app ft argtarget) B
 | sgee_inl : forall G Delta e target A B,
     sg_exact_elaboration G Delta e target A ->
-    sg_exact_elaboration G Delta e (sg_inl target (sg_lift A) (sg_lift B))
+    sg_exact_elaboration G Delta e (sg_coerce A (t_union A B) target)
       (t_union A B)
 | sgee_inr : forall G Delta e target A B,
     sg_exact_elaboration G Delta e target B ->
-    sg_exact_elaboration G Delta e (sg_inr target (sg_lift A) (sg_lift B))
+    sg_exact_elaboration G Delta e (sg_coerce B (t_union A B) target)
       (t_union A B)
 | sgee_switch : forall L G Delta e et A l lt B r rt C,
     sg_exact_elaboration G Delta e et (t_union A B) ->
@@ -1441,7 +1480,7 @@ Inductive sg_exact_elaboration : env -> list (var * typ) ->
       (sg_switch et A lt B rt (sg_lift C)) C
   | sgee_sub : forall G Delta e target A B,
     sg_exact_elaboration G Delta e target A -> A <: B ->
-    sg_exact_elaboration G Delta e (sg_ann target (sg_lift B)) B
+    sg_exact_elaboration G Delta e (sg_coerce A B target) B
 | sgee_abs_pick : forall G Delta A B body target x,
     inhabited B -> x \notin fv_exp body ->
     sg_exact_elaboration (G & x ~: A) ((x, A) :: Delta)
@@ -1472,47 +1511,102 @@ Proof.
   - apply IH with (x := x); exact Lookup.
 Qed.
 
+Fixpoint sg_elaboration_syntax (e : sgexp) : Prop :=
+  match e with
+  | sg_var _ | sg_lit _ | sg_null => True
+  | sg_lam D _ _ body => (exists X Y, D = t_arrow X Y) /\ sg_elaboration_syntax body
+  | sg_app f a => sg_elaboration_syntax f /\ sg_elaboration_syntax a
+  | sg_ann body _ | sg_inl body _ _ | sg_inr body _ _ |
+    sg_coerce _ _ body => sg_elaboration_syntax body
+  | sg_switch scr _ l _ r _ => sg_elaboration_syntax scr /\
+      sg_elaboration_syntax l /\ sg_elaboration_syntax r
+  end.
+
+(* For public programs, the shape predicate implies the logical-safety syntax
+   invariant: there is no additional compiler-node exclusion to assume. *)
+Lemma sg_public_descriptor_safety : forall G e A,
+  sgtyping G e A -> sg_elaboration_syntax e -> sg_safe_syntax e.
+Proof.
+  intros G e A Typed; induction Typed;
+    cbn [sg_elaboration_syntax sg_safe_syntax] in *; tauto.
+Qed.
+
+Corollary sg_public_logical_safety : forall G e A rho,
+  sgtyping G e A -> sg_elaboration_syntax e -> sg_environment_valid rho G ->
+  (exists w, sg_runs (sg_evaluate rho e) (sg_done w) /\ sg_value_typing w A) \/
+  sg_runs (sg_evaluate rho e) sg_error \/ sg_diverges (sg_evaluate rho e).
+Proof.
+  intros G e A rho Typed Shape Env.
+  eapply sg_logical_safety; [exact Typed | | exact Env].
+  eapply sg_public_descriptor_safety; eassumption.
+Qed.
+
+(* Audit witness for the REMOVED rule: all its premises hold, but erasure
+   returns unit at Int. Keeping the premises explicit avoids retaining an
+   unsafe typing judgment as a public API. *)
+Definition sg_forged_evidence :=
+  sg_coerce t_int t_int (sg_ann sg_null sg_any).
+
+Theorem sg_removed_coerce_rule_unsound :
+  t_int <: t_int /\ sgprecision (sg_lift t_int) sg_any /\
+  sgtyping nil (sg_ann sg_null sg_any) sg_any /\
+  sg_eval 3 nil sg_forged_evidence = sg_done sg_vunit /\
+  ~ sg_runtime_type sg_int sg_vunit.
+Proof.
+  split; [apply sub_refl |].
+  split; [constructor |].
+  split; [eapply sgt_ann; [constructor | constructor] |].
+  split; [reflexivity | intros [n Eq]; discriminate].
+Qed.
+
+Theorem sg_compiler_rejects_forged_evidence : forall G T,
+  ~ sg_compiler_typing G sg_forged_evidence T.
+Proof.
+  intros G T Typed; inversion Typed; subst.
+  match goal with Body : sg_compiler_typing _ (sg_ann _ _) _ |- _ =>
+    inversion Body end.
+Qed.
+
 Theorem sg_exact_elaboration_target : forall G Delta e target A,
   sg_exact_elaboration G Delta e target A ->
-  sgtyping (sg_elaboration_context Delta) target (sg_lift A) /\
-  sg_safe_syntax target.
+  sg_compiler_typing (sg_elaboration_context Delta) target (sg_lift A) /\
+  sg_elaboration_syntax target.
 Proof.
   induction 1.
   - split; [constructor | exact I].
   - split; [constructor | exact I].
-  - split; [apply sgt_var; eapply sg_elaboration_lookup; eassumption | exact I].
+  - split; [apply sgct_var; eapply sg_elaboration_lookup; eassumption | exact I].
   - pick_fresh x. destruct (H1 x ltac:(auto)) as [Typed Safe].
     split.
-    + eapply sgt_lam; [exact Typed | apply sg_consistent_refl].
+    + exact (sgct_lam _ _ _ _ Typed).
     + split; [eauto | exact Safe].
   - destruct IHsg_exact_elaboration1 as [Fun SF].
     destruct IHsg_exact_elaboration2 as [Arg SA].
     split; [| split; assumption].
-    eapply sgt_app; [exact Fun | constructor | exact Arg | apply sg_consistent_refl].
+    eapply sgct_app; [exact Fun | exact Arg].
   - destruct IHsg_exact_elaboration as [Typed Safe]; split; [| exact Safe].
-    eapply sgt_inl; [exact Typed | apply sg_consistent_refl].
+    eapply sgct_coerce; [apply s_orb; apply sub_refl | exact Typed].
   - destruct IHsg_exact_elaboration as [Typed Safe]; split; [| exact Safe].
-    eapply sgt_inr; [exact Typed | apply sg_consistent_refl].
+    eapply sgct_coerce; [apply s_orc; apply sub_refl | exact Typed].
   - destruct IHsg_exact_elaboration as [Scr SS].
     pick_fresh x.
     destruct (H1 x ltac:(auto)) as [Left SL].
     destruct (H3 x ltac:(auto)) as [Right SR].
     split; [| split; [exact SS | split; assumption]].
-    eapply sgt_switch; [exact Scr | apply Disj_completeness; assumption
-      | exact Left | apply sg_consistent_refl | exact Right | apply sg_consistent_refl].
+    eapply sgct_switch; [exact Scr | apply Disj_completeness; assumption
+      | exact Left | exact Right].
   - destruct IHsg_exact_elaboration as [Typed Safe]; split; [| exact Safe].
-    eapply sgt_ann; [exact Typed |].
-    eapply sg_con_sub; [eassumption | apply sg_precision_refl | apply sg_precision_refl].
+    eapply sgct_coerce; [eassumption | exact Typed].
   - destruct IHsg_exact_elaboration as [Typed Safe].
     split.
-    + eapply sgt_lam; [exact Typed | apply sg_consistent_refl].
+    + exact (sgct_lam _ _ _ _ Typed).
     + split; [eauto | exact Safe].
   - destruct IHsg_exact_elaboration1 as [Scr SS].
     destruct IHsg_exact_elaboration2 as [Left SL].
     destruct IHsg_exact_elaboration3 as [Right SR].
     split; [| split; [exact SS | split; assumption]].
-    eapply sgt_switch; [exact Scr | apply Disj_completeness; assumption
-      | exact Left | apply sg_consistent_refl | exact Right | apply sg_consistent_refl].
+    eapply sgct_switch; [exact Scr | apply Disj_completeness; assumption
+      | exact Left | exact Right].
 Qed.
 
 Lemma sg_valid_tag_union : forall v A B,
@@ -2001,7 +2095,7 @@ Proof.
     destruct (IHTyped2 Delta Cover) as [argtarget Arg].
     exists (sg_app ft argtarget); eapply sgee_app; eassumption.
   - destruct (IHTyped Delta Cover) as [target Elab].
-    exists (sg_ann target (sg_lift A)); eapply sgee_sub; eassumption.
+    exists (sg_coerce B A target); eapply sgee_sub; eassumption.
   - pick_fresh x.
     destruct (H1 x ltac:(auto) ((x, A) :: Delta)
       (sg_context_covers_push G Delta x A Cover)) as [target Elab].
@@ -2027,7 +2121,7 @@ Qed.
 Corollary sg_exact_elaboration_closed : forall e A,
   typing empty e A -> exists target,
     sg_exact_elaboration empty [] e target A /\
-    sgtyping [] target (sg_lift A) /\ sg_safe_syntax target.
+    sg_compiler_typing [] target (sg_lift A) /\ sg_elaboration_syntax target.
 Proof.
   intros e A Typed.
   destruct (sg_exact_elaboration_canonical _ _ _ Typed) as [target Elab].
@@ -2637,29 +2731,11 @@ Proof.
   - exists 1, (sg_closure (t_arrow A B) (sg_lift A) (sg_lift B) target rho).
     split; [reflexivity | constructor; reflexivity].
   - destruct (IH rho Env Val) as [fuel [v [Run Obs]]].
-    destruct (sg_exact_elaboration_target _ _ _ _ _ Inner) as [Typed Safe].
-    pose proof (sg_evaluation_logical_preservation fuel _ _ _ _ _
-      Typed Safe Env Run) as [Valid Shape].
-    destruct (sg_source_value_cast_total G e A A v
-      (sg_exact_elaboration_source _ _ _ _ _ Inner) Val Obs Valid (sub_refl A))
-      as [w [Cast Observed]].
-    exists (S fuel), w; split; [cbn [sg_eval]; rewrite Run; exact Cast | exact Observed].
+    exists (S fuel), v; split; assumption.
   - destruct (IH rho Env Val) as [fuel [v [Run Obs]]].
-    destruct (sg_exact_elaboration_target _ _ _ _ _ Inner) as [Typed Safe].
-    pose proof (sg_evaluation_logical_preservation fuel _ _ _ _ _
-      Typed Safe Env Run) as [Valid Shape].
-    destruct (sg_source_value_cast_total G e B B v
-      (sg_exact_elaboration_source _ _ _ _ _ Inner) Val Obs Valid (sub_refl B))
-      as [w [Cast Observed]].
-    exists (S fuel), w; split; [cbn [sg_eval]; rewrite Run; exact Cast | exact Observed].
+    exists (S fuel), v; split; assumption.
   - destruct (IH rho Env Val) as [fuel [v [Run Obs]]].
-    destruct (sg_exact_elaboration_target _ _ _ _ _ Inner) as [Typed Safe].
-    pose proof (sg_evaluation_logical_preservation fuel _ _ _ _ _
-      Typed Safe Env Run) as [Valid Shape].
-    destruct (sg_source_value_cast_total G e A B v
-      (sg_exact_elaboration_source _ _ _ _ _ Inner) Val Obs Valid Sub)
-      as [w [Cast Observed]].
-    exists (S fuel), w; split; [cbn [sg_eval]; rewrite Run; exact Cast | exact Observed].
+    exists (S fuel), v; split; assumption.
   - exists 1, (sg_closure (t_arrow A B) (sg_lift A) (sg_lift B) target rho).
     split; [reflexivity | constructor; reflexivity].
 Qed.
@@ -3492,6 +3568,450 @@ Proof.
   - exact (proj2 (proj1 sg_ho_original_simulation sigma e v Run Env G T Typed)).
   - apply sg_ho_compile_operational; exact Run.
 Qed.
+
+(* Finite original executions are decomposed without assuming termination.
+   This judgment uses only original syntax and original beta/switch rules. *)
+Inductive sg_original_evaluates : exp -> exp -> Prop :=
+| sgoe_value : forall v, value v -> sg_original_evaluates v v
+| sgoe_app : forall f a A B body av v,
+    sg_original_evaluates f (e_abs A B body) ->
+    sg_original_evaluates a av -> value av ->
+    sg_original_evaluates (open_exp_wrt_exp body av) v ->
+    sg_original_evaluates (e_app f a) v
+| sgoe_left : forall scr D l E r av C v,
+    sg_original_evaluates scr av -> value av -> findtype av C -> C <: D ->
+    sg_original_evaluates (open_exp_wrt_exp l av) v ->
+    sg_original_evaluates (e_typeof scr D l E r) v
+| sgoe_right : forall scr D l E r av C v,
+    sg_original_evaluates scr av -> value av -> findtype av C -> C <: E ->
+    sg_original_evaluates (open_exp_wrt_exp r av) v ->
+    sg_original_evaluates (e_typeof scr D l E r) v.
+
+Lemma sg_original_evaluates_value : forall e v,
+  sg_original_evaluates e v -> value v.
+Proof. induction 1; assumption. Qed.
+
+Lemma sg_original_value_evaluation : forall e v,
+  value e -> sg_original_evaluates e v -> e = v.
+Proof.
+  intros e v Val Run; inversion Run; subst; auto; inversion Val.
+Qed.
+
+Lemma sg_original_evaluates_step_back : forall e e', step e e' ->
+  forall v, sg_original_evaluates e' v -> sg_original_evaluates e v.
+Proof.
+  intros e e' Red; induction Red; intros result Run.
+  - inversion Run; subst; try solve [inversion H0].
+    eapply sgoe_app; eauto.
+  - inversion Run; subst; try solve [inversion H0].
+    eapply sgoe_app; eauto.
+  - eapply sgoe_app; eauto using sgoe_value.
+  - inversion Run; subst; try solve [inversion H0].
+    + eapply sgoe_left; eauto.
+    + eapply sgoe_right; eauto.
+  - eapply sgoe_left; eauto using sgoe_value.
+  - eapply sgoe_right; eauto using sgoe_value.
+Qed.
+
+Theorem sg_original_execution_decomposition : forall e v,
+  sg_original_steps e v -> value v -> sg_original_evaluates e v.
+Proof.
+  induction 1; intros Val; eauto using sgoe_value,
+    sg_original_evaluates_step_back.
+Qed.
+
+Theorem sg_original_evaluation_reduction : forall e v,
+  sg_original_evaluates e v -> forall G T, typing G e T ->
+  sg_original_steps e v.
+Proof.
+  induction 1 as [v Val
+    | f a A B body av v Fun IHF Arg IHA VA Body IHB
+    | scr D l E r av C v Scr IHS VA Tag Sub Branch IHB
+    | scr D l E r av C v Scr IHS VA Tag Sub Branch IHB];
+    intros G T Typed.
+  - constructor.
+  - destruct (inv_app _ _ _ _ Typed) as [U [V [TF TA]]].
+    pose proof (IHF G (t_arrow U V) TF) as FS.
+    pose proof (IHA G U TA) as AS.
+    assert (LF : lc_exp (e_abs A B body)).
+    { exact (proj2 (typing_regular _ _ _
+        (sg_original_steps_preservation _ _ FS _ _ TF))). }
+    pose proof (sg_original_steps_function _ _ _ FS
+      (proj2 (typing_regular _ _ _ TA))) as First.
+    pose proof (sg_original_steps_argument _ _ _ AS (val_abs _ _ _ LF)) as Second.
+    pose proof (sg_original_steps_trans _ _ _ First Second) as Prefix.
+    assert (Beta : step (e_app (e_abs A B body) av)
+      (open_exp_wrt_exp body av)) by (apply step_beta; assumption).
+    eapply sg_original_steps_trans; [exact Prefix |].
+    eapply sgos_cons; [exact Beta |].
+    eapply IHB; eapply preservation; [| exact Beta].
+    eapply sg_original_steps_preservation; eassumption.
+  - destruct (inv_typeof _ _ _ _ _ _ _ Typed) as [U [TS Disj]].
+    pose proof (sg_original_steps_switch _ _ (IHS G U TS)
+      G T D l E r Typed) as Prefix.
+    pose proof (sg_original_steps_preservation _ _ Prefix G T Typed) as Selected.
+    assert (Choose : step (e_typeof av D l E r) (open_exp_wrt_exp l av)).
+    { eapply step_typeofl; eauto.
+      exact (proj2 (typing_regular _ _ _ Selected)). }
+    eapply sg_original_steps_trans; [exact Prefix |].
+    eapply sgos_cons; [exact Choose |].
+    eapply IHB; eapply preservation; eassumption.
+  - destruct (inv_typeof _ _ _ _ _ _ _ Typed) as [U [TS Disj]].
+    pose proof (sg_original_steps_switch _ _ (IHS G U TS)
+      G T D l E r Typed) as Prefix.
+    pose proof (sg_original_steps_preservation _ _ Prefix G T Typed) as Selected.
+    assert (Choose : step (e_typeof av D l E r) (open_exp_wrt_exp r av)).
+    { eapply step_typeofr; eauto.
+      exact (proj2 (typing_regular _ _ _ Selected)). }
+    eapply sg_original_steps_trans; [exact Prefix |].
+    eapply sgos_cons; [exact Choose |].
+    eapply IHB; eapply preservation; eassumption.
+Qed.
+
+(* Unlike sg_ho_wf, this invariant excludes wrappers around data. It is
+   structural: it mentions neither evaluation nor a desired source run. *)
+Inductive sg_ho_shape : sg_ho_value -> Prop :=
+| sghs_int : forall n, sg_ho_shape (sgh_int n)
+| sghs_unit : sg_ho_shape sgh_unit
+| sghs_closure : forall A B body sigma,
+    Forall sg_ho_shape sigma -> sg_ho_shape (sgh_closure A B body sigma)
+| sghs_boundary : forall A B f, sg_ho_shape f -> sg_ho_callable f = true ->
+    sg_ho_shape (sgh_boundary A B f).
+
+Lemma sg_ho_shape_descriptor : forall v, sg_ho_shape v ->
+  (exists n, v = sgh_int n) \/ v = sgh_unit \/
+  (sg_ho_callable v = true /\ exists A B, sg_ho_tag v = t_arrow A B).
+Proof.
+  intros v Shape; induction Shape as [n | | A B body sigma Env
+    | A B f Shape IH Callable].
+  - left; eauto.
+  - right; left; reflexivity.
+  - right; right; split; [reflexivity | exists A, B; reflexivity].
+  - right; right; split; [simpl; exact Callable |].
+    destruct IH as [[n Eq] | [Eq | [Call Tag]]].
+    + subst f; discriminate Callable.
+    + subst f; discriminate Callable.
+    + exact Tag.
+Qed.
+
+Lemma sg_ho_check_shape : forall A v w, sg_ho_check A v = Some w ->
+  sg_ho_shape v -> sg_ho_shape w.
+Proof.
+  induction A; intros v w Check Shape; cbn [sg_ho_check] in Check.
+  - inversion Check; subst; assumption.
+  - destruct v; inversion Check; subst; assumption.
+  - discriminate.
+  - destruct (sg_ho_callable v) eqn:Call; inversion Check; subst.
+    constructor; assumption.
+  - destruct (sg_ho_check A1 v) eqn:Left.
+    + inversion Check; subst; eapply IHA1; eassumption.
+    + eapply IHA2; eassumption.
+  - destruct v; inversion Check; subst; assumption.
+Qed.
+
+(* A static union boundary can choose a callable but incompatible left arm.
+  The closed typed program below exposes the resulting argument error. *)
+Definition sg_union_trap_left := t_arrow t_unit t_unit.
+Definition sg_union_trap_right := t_arrow t_int t_int.
+Definition sg_union_trap_type :=
+  t_union sg_union_trap_left sg_union_trap_right.
+Lemma sg_union_trap_disjoint : sg_union_trap_left *s1 sg_union_trap_right.
+Proof.
+  apply Disj_soundness; apply ad_arrow; apply ad_unit_intl.
+Qed.
+
+Definition sg_union_trap_source_closure :=
+  sgh_closure t_int t_int (e_var_b 0) nil.
+Definition sg_union_trap_target_closure :=
+  sg_closure sg_union_trap_right sg_int sg_int (sg_var 0) nil.
+
+Theorem sg_union_trap_source_boundary :
+  sg_union_trap_right <: sg_union_trap_type /\
+  sg_ho_check sg_union_trap_type sg_union_trap_source_closure =
+    Some (sgh_boundary t_unit t_unit sg_union_trap_source_closure) /\
+  sg_ho_check t_unit (sgh_int 7) = None.
+Proof. split; [apply s_orc; apply sub_refl | split; reflexivity]. Qed.
+
+Theorem sg_union_trap_target_boundary :
+  sg_cast (sg_lift sg_union_trap_type) sg_union_trap_target_closure =
+    sg_done (sg_wrapper sg_unit sg_unit sg_union_trap_target_closure) /\
+  sg_apply 5
+    (sg_wrapper sg_unit sg_unit sg_union_trap_target_closure)
+    (sg_vint 7) = sg_error.
+Proof. split; reflexivity. Qed.
+
+Theorem sg_union_trap_boundary_operational_error :
+  sg_runs (sg_invoke
+    (sg_wrapper sg_unit sg_unit sg_union_trap_target_closure)
+    (sg_vint 7)) sg_error.
+Proof.
+  apply (proj2 (sg_operational_adequacy _ _)); split; [discriminate |].
+  exists 5; exact (proj2 sg_union_trap_target_boundary).
+Qed.
+
+(* A closed source program: switch the integer identity at the disjoint
+  arrow union, then apply the right binder to 7. Static union introduction
+  and subsumption now preserve the identity without a left-arm wrapper. *)
+Definition sg_union_trap_identity := e_abs t_int t_int (e_var_b 0).
+Definition sg_union_trap_program :=
+  e_typeof sg_union_trap_identity sg_union_trap_left (e_lit 0)
+    sg_union_trap_right (e_app (e_var_b 0) (e_lit 7)).
+Definition sg_union_trap_elaborated :=
+  sg_switch
+    (sg_coerce sg_union_trap_type sg_union_trap_type
+      (sg_coerce sg_union_trap_right sg_union_trap_type sg_id))
+    sg_union_trap_left (sg_lit 0)
+    sg_union_trap_right (sg_app (sg_var 0) (sg_lit 7)) sg_int.
+
+Lemma sg_union_trap_identity_elaboration : forall G Delta, okt G ->
+  sg_exact_elaboration G Delta sg_union_trap_identity sg_id sg_union_trap_right.
+Proof.
+  intros G Delta OK; unfold sg_union_trap_identity, sg_id, sg_union_trap_right.
+  apply sgee_abs with (L := dom G).
+  - exists t_int; split; constructor.
+  - intros x Fresh; unfold open_exp_wrt_exp; simpl.
+    repeat case_if; try congruence.
+    apply sgee_var; auto using okt_typ, binds_push_eq.
+Qed.
+
+Theorem sg_union_trap_exact_elaboration :
+  sg_exact_elaboration empty nil sg_union_trap_program
+    sg_union_trap_elaborated t_int.
+Proof.
+  unfold sg_union_trap_program, sg_union_trap_elaborated.
+  apply sgee_switch with (L := dom (empty : env)) (C := t_int).
+  - eapply sgee_sub; [apply sgee_inr; apply sg_union_trap_identity_elaboration;
+      constructor | apply sub_refl].
+  - intros x Fresh; apply sgee_lit; auto using okt_typ.
+  - intros x Fresh; unfold open_exp_wrt_exp; simpl.
+    repeat case_if; try congruence.
+    eapply sgee_app with (A := t_int).
+    + apply sgee_var; auto using okt_typ, binds_push_eq.
+    + apply sgee_lit; auto using okt_typ.
+  - exact sg_union_trap_disjoint.
+Qed.
+
+Theorem sg_union_trap_closed : fv_exp sg_union_trap_program = \{}.
+Proof.
+  unfold sg_union_trap_program, sg_union_trap_identity; simpl.
+  repeat rewrite union_empty_l; reflexivity.
+Qed.
+
+Theorem sg_union_trap_source_typing :
+  typing empty sg_union_trap_program t_int.
+Proof.
+  eapply sg_exact_elaboration_source; exact sg_union_trap_exact_elaboration.
+Qed.
+
+Theorem sg_union_trap_target_typing :
+  sg_compiler_typing nil sg_union_trap_elaborated sg_int /\
+  sg_elaboration_syntax sg_union_trap_elaborated.
+Proof.
+  exact (sg_exact_elaboration_target _ _ _ _ _ sg_union_trap_exact_elaboration).
+Qed.
+
+Theorem sg_union_trap_source_termination :
+  sg_original_steps sg_union_trap_program (e_lit 7).
+Proof.
+  pose proof (proj2 (typing_regular _ _ _ sg_union_trap_source_typing)) as LC.
+  assert (LI : lc_exp sg_union_trap_identity).
+  { apply (proj2 (typing_regular _ _ _
+      (sg_exact_elaboration_source _ _ _ _ _
+        (sg_union_trap_identity_elaboration empty nil okt_empty)))). }
+  unfold sg_union_trap_program in LC |- *.
+  eapply sgos_cons with (e' := e_app sg_union_trap_identity (e_lit 7)).
+  - assert (Choose : step
+      (e_typeof sg_union_trap_identity sg_union_trap_left (e_lit 0)
+        sg_union_trap_right (e_app (e_var_b 0) (e_lit 7)))
+      (open_exp_wrt_exp (e_app (e_var_b 0) (e_lit 7)) sg_union_trap_identity)).
+    { eapply step_typeofr with (C := sg_union_trap_right).
+      - exact LC.
+      - apply val_abs; exact LI.
+      - apply findtype_arrow; exact LI.
+      - apply sub_refl. }
+    unfold open_exp_wrt_exp in Choose; simpl in Choose.
+    repeat case_if in Choose; try congruence; exact Choose.
+  - eapply sgos_cons; [| constructor].
+    assert (Beta : step (e_app sg_union_trap_identity (e_lit 7))
+      (open_exp_wrt_exp (e_var_b 0) (e_lit 7))).
+    { apply step_beta; [exact LI | constructor]. }
+    unfold open_exp_wrt_exp in Beta; simpl in Beta.
+    repeat case_if in Beta; try congruence; exact Beta.
+Qed.
+
+Lemma sg_union_trap_right_not_left :
+  ~ (sg_union_trap_right <: sg_union_trap_left).
+Proof.
+  intro Sub.
+  apply (sg_union_trap_disjoint sg_union_trap_right).
+  - unfold sg_union_trap_right; constructor; constructor.
+  - split; [exact Sub | apply sub_refl].
+Qed.
+
+Lemma sg_union_trap_switch_tests :
+  sg_test sg_union_trap_right sg_union_trap_left = false /\
+  sg_test sg_union_trap_right sg_union_trap_right = true.
+Proof.
+  assert (Own : sg_union_trap_right <: sg_union_trap_right) by apply sub_refl.
+  pose proof sg_union_trap_right_not_left as Apart.
+  unfold sg_test; split; case_if; congruence.
+Qed.
+
+Theorem sg_union_trap_elaborated_success :
+  sg_eval 8 nil sg_union_trap_elaborated = sg_done (sg_vint 7).
+Proof.
+  destruct sg_union_trap_switch_tests as [Left Right].
+  unfold sg_union_trap_elaborated.
+  cbn [sg_eval sg_bind sg_cast sg_lift sg_callable sg_tag sg_id
+    sg_union_trap_type sg_union_trap_left sg_union_trap_right].
+  change (sg_test (t_arrow t_int t_int) (t_arrow t_unit t_unit) = false)
+    in Left.
+  change (sg_test (t_arrow t_int t_int) (t_arrow t_int t_int) = true)
+    in Right.
+  unfold sg_union_trap_left, sg_union_trap_right.
+  rewrite Left, Right; reflexivity.
+Qed.
+
+Theorem sg_union_trap_elaborated_operational_success :
+  sg_runs (sg_evaluate nil sg_union_trap_elaborated) (sg_done (sg_vint 7)).
+Proof.
+  apply (proj2 (sg_operational_adequacy _ _)); split; [discriminate |].
+  exists 8; exact sg_union_trap_elaborated_success.
+Qed.
+
+(* The compiler evidence node is an erased static coercion.  This is the
+   compiler preservation fragment: it records that successful execution of
+   a compiler coercion preserves the complete runtime value and therefore
+   every runtime descriptor, rather than projecting through B. *)
+Definition sg_compiler_runtime_preserved (A B : typ) (v w : sgval) : Prop :=
+  sg_tag v = sg_tag w /\ v = w.
+
+Theorem sg_compiler_coercion_preservation : forall G A B e T rho v,
+  sg_compiler_typing G (sg_coerce A B e) (sg_lift B) ->
+  sg_eval T rho (sg_coerce A B e) = sg_done v ->
+  exists w, sg_eval (pred T) rho e = sg_done w /\
+    sg_compiler_runtime_preserved A B w v.
+Proof.
+  intros G A B e T rho v Typed Run.
+  inversion Typed; subst.
+  destruct T; [discriminate |].
+  exists v; split; [exact Run | split; reflexivity].
+Qed.
+
+(* This is an installed boundary contract, not an intrinsic contract for
+  the original value.  The cast equation is part of the witness. *)
+Definition sg_subtype_closed_descriptor_contract (A B : typ) (v w : sgval) : Prop :=
+  sg_tag v <: A /\ A <: B /\
+  sg_cast (sg_lift B) v = sg_done w /\
+  sg_value_typing w (sg_lift B) /\ sg_tag w = sg_tag v.
+
+Theorem sg_subtype_closed_descriptor_contract_total : forall A B v,
+  sg_value_valid v -> sg_tag v <: A -> A <: B ->
+  exists w, sg_subtype_closed_descriptor_contract A B v w.
+Proof.
+  intros A B v Valid Tag Sub.
+  destruct (sg_static_subsumption_cast_total A B v Valid Tag Sub)
+    as [w [Cast [Typed Descriptor]]].
+  exists w; split; [exact Tag |].
+  split; [exact Sub |].
+  split; [exact Cast |].
+  split; [exact Typed | exact Descriptor].
+Qed.
+
+(* One relation packages the three observable outcomes.  The successful
+   branch carries value precision; the other branches retain the explicit
+   error/divergence approximation already induced by simulation. *)
+Definition sg_outcome_approx (precise less : sg_command) : Prop :=
+  (forall v, sg_runs precise (sg_done v) ->
+     exists w, sg_runs less (sg_done w) /\ sgvalue_precision v w) /\
+  (sg_runs less sg_error ->
+     sg_runs precise sg_error \/ sg_diverges precise) /\
+  (sg_diverges less ->
+     sg_runs precise sg_error \/ sg_diverges precise).
+
+Theorem sg_complete_outcome_gradual_guarantee : forall e e' rho rho',
+  sgterm_precision e e' -> sgvalues_precision rho rho' ->
+  sg_outcome_approx (sg_evaluate rho e) (sg_evaluate rho' e').
+Proof.
+  intros e e' rho rho' Precision Environments; split.
+  - intros v Run.
+    destruct (sg_unbounded_dynamic_gradual_guarantee e e' rho rho' v
+      Precision Environments Run) as [w [Target Related]].
+    exists w; split; assumption.
+  - split.
+    + intro Error.
+      apply (sg_error_approximation e e' rho rho' Precision Environments Error).
+    + intro Diverges.
+      apply (sg_divergence_approximation e e' rho rho' Precision Environments Diverges).
+Qed.
+
+(* Static evidence preserves the entire runtime value, independently of the
+   shape or nesting of either subtype endpoint. *)
+Theorem sg_static_coercion_erasure : forall fuel rho A B e,
+  sg_eval (S fuel) rho (sg_coerce A B e) = sg_eval fuel rho e.
+Proof. reflexivity. Qed.
+
+Theorem sg_static_coercion_success : forall fuel rho A B e v,
+  sg_eval fuel rho e = sg_done v ->
+  sg_eval (S fuel) rho (sg_coerce A B e) = sg_done v.
+Proof. intros; assumption. Qed.
+
+Theorem sg_nested_union_evidence : forall fuel rho A B C e,
+  sg_eval (S (S fuel)) rho
+    (sg_coerce (t_union A B) C (sg_coerce B (t_union A B) e)) =
+  sg_eval fuel rho e.
+Proof. reflexivity. Qed.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
