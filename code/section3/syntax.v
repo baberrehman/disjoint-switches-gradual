@@ -1,3 +1,4 @@
+
 (*
 
 -> Section 3 of paper
@@ -85,8 +86,7 @@ Inductive lc_exp : exp -> Prop :=    (* defn lc_exp *)
  | lc_e_lit : forall i5,
      (lc_exp (e_lit i5))
  | lc_e_abs : forall (L:vars) (A B:typ) (e:exp),
-      ( forall x , x \notin  L  -> lc_exp  ( open_exp_wrt_exp e (e_var_f x) )  )
-  ->
+        ( forall x , x \notin  L  -> lc_exp  ( open_exp_wrt_exp e (e_var_f x) )  )  ->
      (lc_exp (e_abs A B e))
  | lc_e_app : forall (e1 e2:exp),
      (lc_exp e1) ->
@@ -288,8 +288,8 @@ Inductive disjointness : typ -> typ -> Prop :=    (* defn disjointness *)
      B *a C ->
      (t_union A B) *a C
  | ad_orr : forall (C A B:typ),
-     C *a A ->
-     C *a B ->
+   A *a C ->
+   B *a C ->
      C *a (t_union A B)
 where "A *a B" := (disjointness A B).
 
@@ -398,9 +398,9 @@ Proof.
     apply (Hno (t_arrow t_top C)); auto.
   - apply uh_or.
     + apply IHA1. intros C OrdC SubC.
-      apply (Hno C OrdC). split; auto.
+      apply (Hno C); auto.
     + apply IHA2. intros C OrdC SubC.
-      apply (Hno C OrdC). split; auto.
+      apply (Hno C); auto.
   - exfalso. apply (Hno t_unit); auto.
 Qed.
 
@@ -446,7 +446,7 @@ Proof.
     destruct SubA. destruct SubB.
     eapply IHdisjointness; eauto.
   - apply ord_sub_union in SubA; auto.
-    destruct SubA. eapply IHdisjointness1; eauto. eapply IHdisjointness1; eauto.
+    destruct SubA. eapply IHdisjointness1; eauto. eapply IHdisjointness2; eauto.
   - apply ord_sub_union in SubB; auto.
     destruct SubB. eapply IHdisjointness1; eauto. eapply IHdisjointness2; eauto.
 Qed.
@@ -555,3 +555,116 @@ Lemma arrow_int_unit_disjoint :
 Proof.
   apply ad_arrow. apply ad_unit_intr.
 Qed.
+
+(* Structural gradual extension. De Bruijn variables use list environments;
+   this separate syntax preserves the original locally nameless calculus. *)
+Inductive sgtyp : Set :=
+| sg_any | sg_top | sg_int | sg_bot | sg_unit
+| sg_arrow : sgtyp -> sgtyp -> sgtyp
+| sg_union : sgtyp -> sgtyp -> sgtyp.
+
+Fixpoint sg_lift (A : typ) : sgtyp :=
+  match A with
+  | t_top => sg_top | t_int => sg_int | t_bot => sg_bot
+  | t_unit => sg_unit
+  | t_arrow A B => sg_arrow (sg_lift A) (sg_lift B)
+  | t_union A B => sg_union (sg_lift A) (sg_lift B)
+  end.
+
+Inductive sgexp : Set :=
+| sg_var : nat -> sgexp
+| sg_lit : nat -> sgexp
+| sg_null : sgexp
+(* D is an immutable observable descriptor, independent of check annotations. *)
+| sg_lam : typ -> sgtyp -> sgtyp -> sgexp -> sgexp
+| sg_app : sgexp -> sgexp -> sgexp
+| sg_ann : sgexp -> sgtyp -> sgexp
+| sg_inl : sgexp -> sgtyp -> sgtyp -> sgexp
+| sg_inr : sgexp -> sgtyp -> sgtyp -> sgexp
+| sg_switch : sgexp -> typ -> sgexp -> typ -> sgexp -> sgtyp -> sgexp.
+
+Inductive sgprecision : sgtyp -> sgtyp -> Prop :=
+| sg_prec_any : forall A, sgprecision A sg_any
+| sg_prec_top : sgprecision sg_top sg_top
+| sg_prec_int : sgprecision sg_int sg_int
+| sg_prec_bot : sgprecision sg_bot sg_bot
+| sg_prec_unit : sgprecision sg_unit sg_unit
+| sg_prec_arrow : forall A A' B B', sgprecision A A' -> sgprecision B B' ->
+  sgprecision (sg_arrow A B) (sg_arrow A' B')
+| sg_prec_union : forall A A' B B', sgprecision A A' -> sgprecision B B' ->
+  sgprecision (sg_union A B) (sg_union A' B').
+
+Inductive sgconsistent : sgtyp -> sgtyp -> Prop :=
+| sg_con_any_l : forall A, sgconsistent sg_any A
+| sg_con_any_r : forall A, sgconsistent A sg_any
+| sg_con_top : sgconsistent sg_top sg_top
+| sg_con_int : sgconsistent sg_int sg_int
+| sg_con_bot : sgconsistent sg_bot sg_bot
+| sg_con_unit : sgconsistent sg_unit sg_unit
+| sg_con_arrow : forall A A' B B', sgconsistent A A' -> sgconsistent B B' ->
+  sgconsistent (sg_arrow A B) (sg_arrow A' B')
+| sg_con_union : forall A A' B B', sgconsistent A A' -> sgconsistent B B' ->
+  sgconsistent (sg_union A B) (sg_union A' B')
+(* Directed compatibility includes static subsumption and all its precision
+   weakenings. The target annotation still installs the same runtime cast. *)
+| sg_con_sub : forall A B X Y, A <: B ->
+    sgprecision (sg_lift A) X -> sgprecision (sg_lift B) Y ->
+    sgconsistent X Y.
+
+Inductive sgmatch : sgtyp -> sgtyp -> sgtyp -> Prop :=
+| sg_match_any : sgmatch sg_any sg_any sg_any
+| sg_match_arrow : forall A B, sgmatch (sg_arrow A B) A B.
+
+Inductive sgterm_precision : sgexp -> sgexp -> Prop :=
+| sg_ep_var : forall x, sgterm_precision (sg_var x) (sg_var x)
+| sg_ep_lit : forall n, sgterm_precision (sg_lit n) (sg_lit n)
+| sg_ep_null : sgterm_precision sg_null sg_null
+| sg_ep_lam : forall D A A' B B' e e',
+  sgprecision A A' -> sgprecision B B' -> sgterm_precision e e' ->
+  sgterm_precision (sg_lam D A B e) (sg_lam D A' B' e')
+| sg_ep_app : forall f f' a a', sgterm_precision f f' -> sgterm_precision a a' ->
+  sgterm_precision (sg_app f a) (sg_app f' a')
+| sg_ep_ann : forall e e' A A', sgterm_precision e e' -> sgprecision A A' ->
+  sgterm_precision (sg_ann e A) (sg_ann e' A')
+| sg_ep_inl : forall e e' A A' B B', sgterm_precision e e' ->
+  sgprecision A A' -> sgprecision B B' ->
+  sgterm_precision (sg_inl e A B) (sg_inl e' A' B')
+| sg_ep_inr : forall e e' A A' B B', sgterm_precision e e' ->
+  sgprecision A A' -> sgprecision B B' ->
+  sgterm_precision (sg_inr e A B) (sg_inr e' A' B')
+| sg_ep_switch : forall e e' D l l' E r r' A A',
+  sgterm_precision e e' -> sgterm_precision l l' -> sgterm_precision r r' ->
+  sgprecision A A' -> sgterm_precision (sg_switch e D l E r A)
+                    (sg_switch e' D l' E r' A').
+
+(* Runtime closures retain their lexical environment and original descriptor.
+   Wrappers retain the underlying descriptor as well. *)
+Inductive sgval : Set :=
+| sg_vint : nat -> sgval
+| sg_vunit : sgval
+| sg_closure : typ -> sgtyp -> sgtyp -> sgexp -> list sgval -> sgval
+| sg_wrapper : sgtyp -> sgtyp -> sgval -> sgval.
+
+Fixpoint sg_tag (v : sgval) : typ :=
+  match v with
+  | sg_vint _ => t_int | sg_vunit => t_unit
+  | sg_closure D _ _ _ _ => D
+  | sg_wrapper _ _ w => sg_tag w
+  end.
+
+Inductive sgresult : Set :=
+| sg_done : sgval -> sgresult
+| sg_error : sgresult
+| sg_timeout : sgresult.
+
+(* Legacy closed static boundaries, retained with their original API. *)
+Inductive gtyp : Set :=
+| g_static : typ -> gtyp
+| g_unknown : gtyp.
+
+Inductive gexp : Set :=
+| g_embed : exp -> gexp
+| g_inject : gexp -> gexp
+| g_project : typ -> gexp -> gexp
+| g_pack : typ -> exp -> gexp
+| g_error : gexp.
