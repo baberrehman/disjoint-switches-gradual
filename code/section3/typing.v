@@ -252,9 +252,9 @@ Inductive sgtyping : list sgtyp -> sgexp -> sgtyp -> Prop :=
     sgtyping (sg_lift E :: G) r C -> sgconsistent C A ->
     sgtyping G (sg_switch e D l E r A) A.
 
-  (* Compiler-only typing: erased evidence requires the exact input type.
-     This judgment has no consistency or precision-based evidence rule and
-     makes no static gradual guarantee under arbitrary operand weakening. *)
+      (* Compiler-only typing: erased evidence requires the exact input type.
+        Its lambda rule ties the immutable descriptor to its exact lifted static
+        annotations. This judgment has no precision escape rule. *)
   Inductive sg_compiler_typing : list sgtyp -> sgexp -> sgtyp -> Prop :=
   | sgct_var : forall G x A, nth_error G x = Some A ->
     sg_compiler_typing G (sg_var x) A
@@ -1156,6 +1156,7 @@ Proof.
     cbn [sg_apply] in E; destruct (sg_cast A a); cbn [sg_bind] in E;
     try discriminate; eapply sg_bind_cast_result; eauto.
 Qed.
+
 
 (* Lambda descriptors retain an observable arrow shape. Switch descriptors
   are arbitrary: branch-entry casts establish their declared binder types. *)

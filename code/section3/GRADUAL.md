@@ -10,7 +10,10 @@ is introduced by the static evidence repair.
 rule for it. The separate `sg_compiler_typing` judgment requires `A <: B`
 and compiler typing of the operand at exactly `sg_lift A`, and concludes
 compiler typing at `sg_lift B`. Its other rules certify exact variables,
-data, source-descriptor lambdas, applications, and switches; there is no
+typed lambda has fields exactly `sg_lift A` and `sg_lift B` for descriptor
+data, source-descriptor lambdas, applications, and switches. The compiler
+lambda rule fixes fields to exactly `sg_lift A` and `sg_lift B` for descriptor
+`A -> B`; its body is checked under those exact lifted annotations. There is no
 annotation/consistency rule or precision escape to unknown.
 
 `sg_removed_coerce_rule_unsound` proves that the removed public rule's
@@ -100,6 +103,14 @@ and `sg_elaboration_syntax`. `sg_exact_elaboration_complete` covers every
 original typing rule under a covering context, including arbitrary static
 subsumption; its canonical and closed corollaries remain available.
 
+The compiler lambda constructor enforces exact correspondence between its
+static source descriptor and both runtime annotation fields, and exact
+elaboration uses those lifted annotations. This removes descriptor/annotation
+mismatch as a counterexample to compiler preservation. It does not by itself
+prove preservation for applications or switches: those cases need an invariant
+relating branch-entry casts, closure bodies, and captured environments across
+compiler-only terms.
+
 `sg_exact_elaboration_value_evaluation` has no `sg_safe_syntax` premise:
 given an exact elaboration, a valid target environment, and a source value,
 there exist fuel and a successful target value related by
@@ -144,13 +155,14 @@ translations. Their conditional correspondences retain explicit successful
 source-run premises. Original finite execution decomposition is also retained;
 it does not supply unconditional correspondence for repaired exact elaboration.
 
-Full static conservativity remains open. Function and switch boundary casts
-can still project static unions and need further analysis or repair. A logical
-relation closed under static subtyping, execution correspondence for general
-applications and switches, and stronger function observations remain necessary
-for a full proof. Intrinsic descriptor validity is also unproved. Neither a
-universal success-preservation theorem nor its negation is claimed for the
-repaired relation.
+Full compiler preservation and full static execution conservativity remain
+open. The runtime shape relation is sufficient for cast results and immediate
+application results, but does not certify a closure's body or captured
+environment. An invariant closed under compiler typing, static subtyping, and
+branch-entry casts is needed for preservation of arbitrary compiler-typed
+applications and switches. Intrinsic descriptor validity and general
+exact-elaboration execution correspondence are also unproved. No counterexample
+to the repaired exact-elaboration theorem is claimed.
 
 ## Validation
 
